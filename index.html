@@ -56,6 +56,12 @@
             border: 1px solid #334155;
             pointer-events: auto; /* Allow interaction with cards */
         }
+
+        /* Modal specific styles */
+        #cheat-modal {
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 100;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -63,7 +69,7 @@
 
     <div id="game-container">
         
-        <!-- RANK CARD (NEW: TOP-LEFT) -->
+        <!-- RANK CARD (TOP-LEFT) -->
         <div class="absolute top-8 left-8 w-64 max-w-full pointer-events-none">
             <div class="counter-card p-4" id="rank-display">
                 <p class="text-sm uppercase text-gray-400">Current Rank</p>
@@ -96,11 +102,28 @@
         <!-- Notifications appear here -->
     </div>
 
+    <!-- CHEAT CODE MODAL (NEW) -->
+    <div id="cheat-modal" class="fixed inset-0 flex items-center justify-center hidden">
+        <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-96 border-2 border-indigo-500 pointer-events-auto">
+            <h2 class="text-2xl font-bold text-white mb-4">Enter Cheat Code</h2>
+            <p class="text-sm text-gray-400 mb-4">Press **Enter** to submit or **Escape** to close.</p>
+            <input 
+                id="cheat-input" 
+                type="text" 
+                class="w-full p-3 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="Type code here"
+            >
+        </div>
+    </div>
+    <!-- END CHEAT CODE MODAL -->
+
     <script type="module">
         let scene, camera, renderer, cube, gridHelper, cubeLight;
         let clickCount = 0;
         let cubeVelocity = 0;
         let isSpacebarPressed = false; 
+        let isHackrbandActive = false; // State for cheat code status
+        const cheatCode = "HACKRBAND";
         const gravity = -0.005;
         const jumpForce = 0.1;
         const cubeBaseY = 0.5;
@@ -123,7 +146,9 @@
         const gameContainer = document.getElementById('game-container');
         const achievementListElement = document.getElementById('achievement-list');
         const notificationArea = document.getElementById('notification-area');
-        const rankNameElement = document.getElementById('current-rank-name'); // NEW: Rank UI element
+        const rankNameElement = document.getElementById('current-rank-name'); 
+        const modal = document.getElementById('cheat-modal'); 
+        const cheatInput = document.getElementById('cheat-input'); 
         
         // --- RANK DEFINITIONS ---
         const ranks = [
@@ -168,7 +193,6 @@
         };
 
         function getRandomColor() {
-            // Using a palette for neon-like colors
             const colors = [0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF69B4, 0x8A2BE2]; 
             return colors[Math.floor(Math.random() * colors.length)];
         }
@@ -217,25 +241,71 @@
 
             // Initial UI Renders
             renderAchievements();
-            updateRankDisplay(); // NEW: Initial rank display
+            updateRankDisplay(); 
 
-            // Event listeners
+            // Event listeners (Initial setup)
             window.addEventListener('resize', onWindowResize, false);
-            document.addEventListener('keydown', onKeyDown, false);
+            // We start with the game's keydown handler active
+            document.addEventListener('keydown', onKeyDown, false); 
             document.addEventListener('keyup', onKeyUp, false); 
             gameContainer.addEventListener('click', performJumpAction, false); 
         }
 
+        // --- CHEAT MODAL LOGIC ---
+
+        function showCheatModal() {
+            modal.classList.remove('hidden');
+            cheatInput.value = '';
+            cheatInput.focus();
+            
+            // Temporarily swap key listeners
+            document.removeEventListener('keydown', onKeyDown, false);
+            document.addEventListener('keydown', handleModalInput, false);
+        }
+
+        function hideCheatModal() {
+            modal.classList.add('hidden');
+            
+            // Swap key listeners back to game control
+            document.removeEventListener('keydown', handleModalInput, false);
+            document.addEventListener('keydown', onKeyDown, false);
+        }
+
+        function checkCheatCode() {
+            const input = cheatInput.value.trim().toUpperCase();
+            
+            if (input === cheatCode) {
+                isHackrbandActive = true;
+                // Use new showNotification signature
+                showNotification("Cheat Activated", "Hold Spacebar for infinite clicks!", 'bg-green-500 text-white');
+                updateRankDisplay(); // Force UI update
+            } else {
+                showNotification("Invalid Code", "Try again or press Escape to close.", 'bg-red-500 text-white');
+            }
+            hideCheatModal();
+        }
+        
+        function handleModalInput(event) {
+            // Checks for Enter inside the modal (to submit)
+            if (event.code === 'Enter') {
+                event.preventDefault();
+                checkCheatCode();
+            } 
+            // Checks for Escape inside the modal (to close)
+            else if (event.code === 'Escape') {
+                event.preventDefault();
+                hideCheatModal();
+            }
+        }
+
         // --- RANK LOGIC ---
         function getCurrentRank() {
-            let currentRank = ranks[0]; // Recruit (1 click)
+            let currentRank = ranks[0]; 
 
-            // Iterate through ranks to find the highest one achieved
             for (let i = 0; i < ranks.length; i++) {
                 if (clickCount >= ranks[i].clicks) {
                     currentRank = ranks[i];
                 } else {
-                    // Since the list is sorted, we can stop
                     break; 
                 }
             }
@@ -244,10 +314,41 @@
 
         function updateRankDisplay() {
             const rank = getCurrentRank();
+            // 1. Set base rank text
             rankNameElement.textContent = rank.name;
+
+            // 2. Apply style based on hack status
+            if (isHackrbandActive) {
+                rankNameElement.textContent += " (HACKED)";
+                // Use Tailwind classes to change color and add pulsing effect
+                rankNameElement.classList.remove('text-red-400');
+                rankNameElement.classList.add('text-yellow-400', 'animate-pulse');
+            } else {
+                // Reset to default color and remove pulse
+                rankNameElement.classList.add('text-red-400');
+                rankNameElement.classList.remove('text-yellow-400', 'animate-pulse');
+            }
         }
 
         // --- ACHIEVEMENT LOGIC ---
+        function showNotification(title, message, className = 'bg-yellow-400 text-gray-900') {
+            const notification = document.createElement('div');
+            notification.className = `${className} p-3 rounded-xl shadow-2xl transition-all duration-300 transform translate-x-full opacity-0 pointer-events-auto min-w-[200px]`;
+            notification.innerHTML = `<span class="font-extrabold">${title}</span><br>${message}`;
+            notificationArea.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.transform = 'translateX(0)';
+                notification.style.opacity = '1';
+            }, 10);
+
+            setTimeout(() => {
+                notification.style.transform = 'translateX(100%)';
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 500);
+            }, 4000); 
+        }
+
         function renderAchievements() {
             achievementListElement.innerHTML = ''; 
 
@@ -319,30 +420,13 @@
             });
         }
 
-        function showNotification(name, icon) {
-            const notification = document.createElement('div');
-            notification.className = 'bg-yellow-400 text-gray-900 p-3 rounded-xl shadow-2xl transition-all duration-300 transform translate-x-full opacity-0 pointer-events-auto min-w-[200px]';
-            notification.innerHTML = `<span class="font-extrabold">${icon} ACHIEVEMENT UNLOCKED!</span><br>${name}`;
-            notificationArea.appendChild(notification);
-
-            setTimeout(() => {
-                notification.style.transform = 'translateX(0)';
-                notification.style.opacity = '1';
-            }, 10);
-
-            setTimeout(() => {
-                notification.style.transform = 'translateX(100%)';
-                notification.style.opacity = '0';
-                setTimeout(() => notification.remove(), 500);
-            }, 4000); 
-        }
-
         function checkAchievements() {
             for (const key in achievements) {
                 const ach = achievements[key];
                 if (!ach.unlocked && clickCount >= ach.clicks) {
                     ach.unlocked = true;
-                    showNotification(ach.name, ach.icon);
+                    // Updated call to use new signature
+                    showNotification(`${ach.icon} ACHIEVEMENT UNLOCKED!`, ach.name);
                 }
             }
         }
@@ -409,16 +493,34 @@
         }
 
         function onKeyDown(event) {
-            if ((event.code === 'Space' || event.keyCode === 32) && !isSpacebarPressed) {
+            // Check for Enter key to show modal
+            if (event.code === 'Enter') {
                 event.preventDefault();
-                isSpacebarPressed = true; 
-                performJumpAction();
+                showCheatModal();
+                return; 
+            }
+
+            // Spacebar logic
+            if (event.code === 'Space' || event.keyCode === 32) {
+                event.preventDefault();
+                
+                if (isHackrbandActive) {
+                    // Mode 1: Hack is active (Hold to click)
+                    performJumpAction();
+                } else if (!isSpacebarPressed) {
+                    // Mode 2: Hack is inactive (Single click per press)
+                    isSpacebarPressed = true; 
+                    performJumpAction();
+                }
             }
         }
 
         function onKeyUp(event) {
             if (event.code === 'Space' || event.keyCode === 32) {
-                isSpacebarPressed = false; 
+                // Only reset the flag if the hack is NOT active
+                if (!isHackrbandActive) {
+                    isSpacebarPressed = false; 
+                }
             }
         }
 
@@ -434,7 +536,7 @@
             // UI UPDATES
             checkAchievements();
             renderAchievements(); 
-            updateRankDisplay(); // NEW: Update the rank on every click
+            updateRankDisplay(); 
 
             // 3D PHYSICS/VISUALS
             const newColor = getRandomColor();
