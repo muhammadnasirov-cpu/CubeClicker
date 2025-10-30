@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Spacebar Clicker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #0d1117;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .counter-card {
+            background-color: rgba(30, 41, 59, 0.9);
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            color: white;
+            transition: transform 0.1s ease-out;
+            border: 1px solid #334155;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-overlay">
+            <div class="counter-card" id="click-counter">
+                <p class="text-sm uppercase text-gray-400">Jumps / Clicks</p>
+                <p class="text-5xl font-extrabold text-indigo-400 mt-1">0</p>
+            </div>
+            </div>
+    </div>
+
+    <script type="module">
+        let scene, camera, renderer, cube, gridHelper, cubeLight;
+        let clickCount = 0;
+        let cubeVelocity = 0;
+        const gravity = -0.005;
+        const jumpForce = 0.1;
+        const cubeBaseY = 0.5;
+        const gravityIncreaseFactor = 0.3; // Controls how much gravity increases per unit of height
+
+        // Base camera constants for zoom effect
+        const baseCameraZ = 4;
+        const baseCameraY = 3;
+        const zoomFactor = 2.0; // Controls how much the camera pulls back per unit of height
+
+        // Variables for the forward/backward click effect
+        let cubeZOffset = 0;
+        let cameraZOffset = 0;
+        const clickZImpulse = 0.3; // How much the cube/camera move forward on click
+        const springBackSpeed = 0.1; // How quickly they return to normal Z
+
+        const counterElement = document.getElementById('click-counter').querySelector('p.text-5xl');
+        const counterCard = document.getElementById('click-counter');
+
+        function getRandomColor() {
+            // Using a palette for neon-like colors
+            const colors = [0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF69B4, 0x8A2BE2]; // Cyan, Magenta, Yellow, Green, HotPink, BlueViolet
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a1a); // Very dark blue/purple for neon contrast
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, baseCameraY, baseCameraZ);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('game-container').appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Softer ambient light
+            scene.add(ambientLight);
+
+            // Cube setup
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const initialColor = getRandomColor(); // Start with a random neon color
+            // Use MeshBasicMaterial for pure color that doesn't react to lights, or MeshStandard/Lambert with emissive
+            const material = new THREE.MeshLambertMaterial({ 
+                color: initialColor, 
+                emissive: initialColor, // Cube glows its own color
+                emissiveIntensity: 0.8
+            });
+            cube = new THREE.Mesh(geometry, material);
+            cube.position.y = cubeBaseY;
+            scene.add(cube);
+
+            // Add a subtle point light to the cube to enhance its glow
+            cubeLight = new THREE.PointLight(initialColor, 1.5, 5); // Color, intensity, distance
+            cubeLight.position.set(0, cubeBaseY + 0.5, 0);
+            cube.add(cubeLight); // Make the light a child of the cube so it moves with it
+
+            // Ground Grid - Kept for the floor
+            const size = 20;
+            const divisions = 20;
+            gridHelper = new THREE.GridHelper(size, divisions, 0x00aaff, 0x00aaff); // Neon blue grid lines
+            gridHelper.material.opacity = 0.6;
+            gridHelper.material.transparent = true;
+            gridHelper.position.y = 0.01; // Slightly above 0 to prevent z-fighting with the background
+            scene.add(gridHelper);
+
+            // The vertical grids (zGrid and zGridBack) have been removed.
+
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('keydown', onKeyDown, false);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Apply forward/backward Z-offset for cube
+            cube.position.z = cubeZOffset;
+            
+            // Ensure cubeLight follows cube's Z position
+            cubeLight.position.z = cube.position.z; 
+
+            // Update cube's vertical movement
+            if (cube.position.y > cubeBaseY || cubeVelocity > 0) {
+                cube.position.y += cubeVelocity;
+                
+                // Ensure cubeLight follows cube's Y position
+                cubeLight.position.y = cube.position.y + 0.5;
+
+                const heightOffset = cube.position.y - cubeBaseY; 
+                
+                const gravityFactor = 1 + heightOffset * gravityIncreaseFactor;
+                const dynamicGravity = gravity * gravityFactor;
+
+                cubeVelocity += dynamicGravity;
+
+                if (cube.position.y < cubeBaseY) {
+                    cube.position.y = cubeBaseY;
+                    cubeVelocity = 0;
+                    cubeLight.position.y = cubeBaseY + 0.5; // Snap light to base
+                }
+                
+                // --- Dynamic Camera Zoom Logic ---
+                const zoomOffset = heightOffset * zoomFactor; 
+                const followY = heightOffset * 0.5; 
+
+                camera.position.z = baseCameraZ + zoomOffset + cameraZOffset;
+                camera.position.y = baseCameraY + followY;
+
+            } else {
+                // Cube is grounded, ensure camera is at base position
+                camera.position.z = baseCameraZ + cameraZOffset;
+                camera.position.y = baseCameraY;
+            }
+
+            if (cube.position.y > cubeBaseY) {
+                cube.rotation.x += 0.02;
+                cube.rotation.y += 0.03;
+            } else {
+                 cube.rotation.set(0, 0, 0);
+            }
+            
+            camera.lookAt(cube.position);
+
+            renderer.render(scene, camera);
+
+            // Gradually spring back cube's Z offset
+            if (cubeZOffset !== 0) {
+                cubeZOffset -= cubeZOffset * springBackSpeed;
+                if (Math.abs(cubeZOffset) < 0.01) cubeZOffset = 0;
+            }
+
+            // Gradually spring back camera's Z offset
+            if (cameraZOffset !== 0) {
+                cameraZOffset -= cameraZOffset * springBackSpeed;
+                if (Math.abs(cameraZOffset) < 0.01) cameraZOffset = 0;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onKeyDown(event) {
+            if (event.code === 'Space' || event.keyCode === 32) {
+                event.preventDefault();
+                performJumpAction();
+            }
+        }
+
+        function performJumpAction() {
+            clickCount++;
+            counterElement.textContent = clickCount;
+
+            counterCard.style.transform = 'scale(1.1)';
+            setTimeout(() => {
+                counterCard.style.transform = 'scale(1.0)';
+            }, 100);
+
+            const newColor = getRandomColor();
+            cube.material.color.set(newColor);
+            cube.material.emissive.set(newColor); // Update emissive color too
+            cubeLight.color.set(newColor); // Update the point light color
+
+            cubeVelocity = jumpForce;
+
+            cubeZOffset = -clickZImpulse;
+            cameraZOffset = clickZImpulse;
+        }
+
+
+        window.onload = function () {
+            init();
+            animate();
+        };
+
+    </script>
+</body>
+</html>
