@@ -25,7 +25,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            cursor: pointer; /* Add a pointer cursor to suggest clickability */
+            cursor: pointer;
         }
 
         canvas {
@@ -54,7 +54,7 @@
             color: white;
             transition: transform 0.1s ease-out;
             border: 1px solid #334155;
-            pointer-events: auto; /* Allow interaction with cards */
+            pointer-events: auto;
         }
 
         /* Modal specific styles */
@@ -69,11 +69,15 @@
 
     <div id="game-container">
         
+        <!-- RESTART BUTTON (Hidden) -->
+        <button id="restart-button" class="fixed top-2 left-2 text-xs font-bold text-red-500 opacity-20 hover:opacity-100 transition-opacity p-2 rounded-lg bg-gray-900/50 z-50 pointer-events-auto" data-confirm="false">
+            RESTART
+        </button>
+
         <!-- RANK CARD (TOP-LEFT) -->
         <div class="absolute top-8 left-8 w-64 max-w-full pointer-events-none">
             <div class="counter-card p-4" id="rank-display">
                 <p class="text-sm uppercase text-gray-400">Current Rank</p>
-                <!-- This element holds the rank name -->
                 <p class="text-3xl font-extrabold text-red-400 mt-1" id="current-rank-name">Recruit</p>
             </div>
         </div>
@@ -102,7 +106,7 @@
         <!-- Notifications appear here -->
     </div>
 
-    <!-- CHEAT CODE MODAL (NEW) -->
+    <!-- CHEAT CODE MODAL -->
     <div id="cheat-modal" class="fixed inset-0 flex items-center justify-center hidden">
         <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-96 border-2 border-indigo-500 pointer-events-auto">
             <h2 class="text-2xl font-bold text-white mb-4">Enter Cheat Code</h2>
@@ -118,11 +122,15 @@
     <!-- END CHEAT CODE MODAL -->
 
     <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         let scene, camera, renderer, cube, gridHelper, cubeLight;
         let clickCount = 0;
         let cubeVelocity = 0;
         let isSpacebarPressed = false; 
-        let isHackrbandActive = false; // State for cheat code status
+        let isHackrbandActive = false;
         const cheatCode = "HACKRBAND";
         const gravity = -0.005;
         const jumpForce = 0.1;
@@ -133,12 +141,16 @@
         const baseCameraZ = 4;
         const baseCameraY = 3;
         const zoomFactor = 2.0; 
-
-        // Variables for the forward/backward click effect
         let cubeZOffset = 0;
         let cameraZOffset = 0;
         const clickZImpulse = 0.3; 
         const springBackSpeed = 0.1; 
+
+        // Firebase Globals
+        let app, db, auth;
+        let userId = null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
 
         // UI elements
         const counterElement = document.getElementById('click-counter').querySelector('p.text-5xl');
@@ -149,8 +161,9 @@
         const rankNameElement = document.getElementById('current-rank-name'); 
         const modal = document.getElementById('cheat-modal'); 
         const cheatInput = document.getElementById('cheat-input'); 
+        const restartButton = document.getElementById('restart-button'); 
         
-        // --- RANK DEFINITIONS ---
+        // --- RANK DEFINITIONS (UNCHANGED) ---
         const ranks = [
             { clicks: 1, name: 'Recruit' },
             { clicks: 100, name: 'Rookie' },
@@ -173,7 +186,7 @@
             { clicks: 10000, name: 'Death Lord' }
         ];
 
-        // Achievement Definitions
+        // Achievement Definitions (UNCHANGED)
         const achievements = {
             'first_step': { name: 'First Step', clicks: 1, unlocked: false, icon: '⭐' },
             'warmed_up': { name: 'Warmed Up', clicks: 100, unlocked: false, icon: '🔥' },
@@ -191,6 +204,88 @@
             'ten_thousand': { name: 'TEN THOUSEND!', clicks: 10000, unlocked: false, icon: '💯' },
             'beat_me': { name: 'Im out of ideas, you beat me', clicks: 15000, unlocked: false, icon: '👑' }
         };
+
+        // --- FIREBASE/FIRESTORE LOGIC ---
+
+        function getScoreDocRef(currentUserId) {
+            const collectionPath = `/artifacts/${appId}/users/${currentUserId}/game_data`;
+            return doc(db, collectionPath, 'clicker_score');
+        }
+
+        async function initializeFirestore() {
+            if (!firebaseConfig) {
+                console.error("Firebase config not available. Persistence disabled.");
+                return;
+            }
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('Debug'); // Enable logging
+
+            try {
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        startScoreListener(userId);
+                    } else {
+                        console.error("User not signed in.");
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase Auth error:", error);
+            }
+        }
+
+        function startScoreListener(currentUserId) {
+            const scoreRef = getScoreDocRef(currentUserId);
+            onSnapshot(scoreRef, (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    const data = docSnapshot.data();
+                    const savedClicks = data.clicks || 0;
+                    
+                    // Only update if the saved score is higher (to load highest score on startup)
+                    if (savedClicks > clickCount) {
+                        clickCount = savedClicks;
+                        counterElement.textContent = clickCount.toLocaleString();
+                        // Re-check everything when loading from persistence
+                        for (const key in achievements) {
+                            if (clickCount >= achievements[key].clicks) {
+                                achievements[key].unlocked = true;
+                            }
+                        }
+                        renderAchievements();
+                        updateRankDisplay();
+                    }
+                    console.log("Score loaded/updated from Firestore:", clickCount);
+                } else {
+                    // Document doesn't exist yet, save the initial 0 score
+                    saveScore();
+                    console.log("No score found. Saving initial document.");
+                }
+            }, (error) => {
+                console.error("Error listening to score:", error);
+            });
+        }
+
+        function saveScore() {
+            if (!db || !userId) {
+                console.error("Firestore not ready. Cannot save score.");
+                return;
+            }
+            const scoreRef = getScoreDocRef(userId);
+            // Save current clickCount
+            setDoc(scoreRef, { clicks: clickCount, lastUpdated: new Date() }, { merge: true })
+                .then(() => console.log("Score saved:", clickCount))
+                .catch(error => console.error("Error saving score:", error));
+        }
+
+        // --- GAME/UI LOGIC ---
 
         function getRandomColor() {
             const colors = [0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF69B4, 0x8A2BE2]; 
@@ -212,7 +307,6 @@
             const ambientLight = new THREE.AmbientLight(0x404040, 0.5); 
             scene.add(ambientLight);
 
-            // Cube setup
             const geometry = new THREE.BoxGeometry(1, 1, 1);
             const initialColor = getRandomColor(); 
             
@@ -225,12 +319,10 @@
             cube.position.y = cubeBaseY;
             scene.add(cube);
 
-            // Add a subtle point light to the cube to enhance its glow
             cubeLight = new THREE.PointLight(initialColor, 1.5, 5); 
             cubeLight.position.set(0, cubeBaseY + 0.5, 0);
             cube.add(cubeLight); 
 
-            // Ground Grid - Kept for the floor
             const size = 20;
             const divisions = 20;
             gridHelper = new THREE.GridHelper(size, divisions, 0x00aaff, 0x00aaff); 
@@ -239,26 +331,65 @@
             gridHelper.position.y = 0.01; 
             scene.add(gridHelper);
 
-            // Initial UI Renders
+            // Initial UI Renders (will be updated by Firestore listener soon after)
             renderAchievements();
             updateRankDisplay(); 
+            counterElement.textContent = clickCount.toLocaleString();
 
-            // Event listeners (Initial setup)
+            // Event listeners
             window.addEventListener('resize', onWindowResize, false);
-            // We start with the game's keydown handler active
             document.addEventListener('keydown', onKeyDown, false); 
             document.addEventListener('keyup', onKeyUp, false); 
-            gameContainer.addEventListener('click', performJumpAction, false); 
+            gameContainer.addEventListener('click', performJumpAction, false);
+            restartButton.addEventListener('click', restartGame, false);
         }
 
-        // --- CHEAT MODAL LOGIC ---
+        // --- RESTART LOGIC ---
+
+        function restartGame() {
+            // Use double-click to confirm reset (since alert/confirm is forbidden)
+            if (restartButton.dataset.confirm === 'true') {
+                
+                clickCount = 0;
+                isHackrbandActive = false;
+                counterElement.textContent = clickCount.toLocaleString();
+                
+                // Reset achievement state
+                for (const key in achievements) {
+                    achievements[key].unlocked = false;
+                }
+
+                saveScore(); // Save the zero score to Firestore
+                
+                renderAchievements();
+                updateRankDisplay();
+
+                restartButton.dataset.confirm = 'false'; // Reset confirmation state
+                restartButton.textContent = "RESTART";
+                showNotification("Game Reset", "Your clicks have been reset to 0.", 'bg-red-700 text-white');
+
+            } else {
+                restartButton.dataset.confirm = 'true';
+                restartButton.textContent = "CLICK AGAIN TO CONFIRM RESET";
+                showNotification("Warning", "Click RESTART again to confirm score wipe.", 'bg-red-500 text-white');
+                
+                // Timeout to revert text if user doesn't confirm
+                setTimeout(() => {
+                    if (restartButton.dataset.confirm === 'true') {
+                        restartButton.dataset.confirm = 'false';
+                        restartButton.textContent = "RESTART";
+                    }
+                }, 3000);
+            }
+        }
+
+        // --- CHEAT MODAL LOGIC (UNCHANGED) ---
 
         function showCheatModal() {
             modal.classList.remove('hidden');
             cheatInput.value = '';
             cheatInput.focus();
             
-            // Temporarily swap key listeners
             document.removeEventListener('keydown', onKeyDown, false);
             document.addEventListener('keydown', handleModalInput, false);
         }
@@ -266,7 +397,6 @@
         function hideCheatModal() {
             modal.classList.add('hidden');
             
-            // Swap key listeners back to game control
             document.removeEventListener('keydown', handleModalInput, false);
             document.addEventListener('keydown', onKeyDown, false);
         }
@@ -276,9 +406,8 @@
             
             if (input === cheatCode) {
                 isHackrbandActive = true;
-                // Use new showNotification signature
                 showNotification("Cheat Activated", "Hold Spacebar for infinite clicks!", 'bg-green-500 text-white');
-                updateRankDisplay(); // Force UI update
+                updateRankDisplay();
             } else {
                 showNotification("Invalid Code", "Try again or press Escape to close.", 'bg-red-500 text-white');
             }
@@ -286,22 +415,18 @@
         }
         
         function handleModalInput(event) {
-            // Checks for Enter inside the modal (to submit)
             if (event.code === 'Enter') {
                 event.preventDefault();
                 checkCheatCode();
-            } 
-            // Checks for Escape inside the modal (to close)
-            else if (event.code === 'Escape') {
+            } else if (event.code === 'Escape') {
                 event.preventDefault();
                 hideCheatModal();
             }
         }
 
-        // --- RANK LOGIC ---
+        // --- RANK LOGIC (UNCHANGED) ---
         function getCurrentRank() {
             let currentRank = ranks[0]; 
-
             for (let i = 0; i < ranks.length; i++) {
                 if (clickCount >= ranks[i].clicks) {
                     currentRank = ranks[i];
@@ -314,23 +439,19 @@
 
         function updateRankDisplay() {
             const rank = getCurrentRank();
-            // 1. Set base rank text
             rankNameElement.textContent = rank.name;
 
-            // 2. Apply style based on hack status
             if (isHackrbandActive) {
                 rankNameElement.textContent += " (HACKED)";
-                // Use Tailwind classes to change color and add pulsing effect
                 rankNameElement.classList.remove('text-red-400');
                 rankNameElement.classList.add('text-yellow-400', 'animate-pulse');
             } else {
-                // Reset to default color and remove pulse
                 rankNameElement.classList.add('text-red-400');
                 rankNameElement.classList.remove('text-yellow-400', 'animate-pulse');
             }
         }
 
-        // --- ACHIEVEMENT LOGIC ---
+        // --- ACHIEVEMENT LOGIC (UNCHANGED) ---
         function showNotification(title, message, className = 'bg-yellow-400 text-gray-900') {
             const notification = document.createElement('div');
             notification.className = `${className} p-3 rounded-xl shadow-2xl transition-all duration-300 transform translate-x-full opacity-0 pointer-events-auto min-w-[200px]`;
@@ -372,24 +493,11 @@
             const defaultNext = { name: 'Maxed Out', clicks: 'N/A', icon: '👑', status: 'Maxed' };
 
             const displaySlots = [
-                {
-                    title: "Already Achieved",
-                    item: lastAchieved,
-                    color: 'text-green-400',
-                },
-                {
-                    title: "Upcoming",
-                    item: upcoming || defaultNext,
-                    color: 'text-indigo-400',
-                },
-                {
-                    title: "Upcoming after",
-                    item: upcomingAfter || defaultNext,
-                    color: 'text-yellow-400',
-                }
+                { title: "Already Achieved", item: lastAchieved, color: 'text-green-400' },
+                { title: "Upcoming", item: upcoming || defaultNext, color: 'text-indigo-400' },
+                { title: "Upcoming after", item: upcomingAfter || defaultNext, color: 'text-yellow-400' }
             ];
 
-            // Render the three slots
             displaySlots.forEach(slot => {
                 const li = document.createElement('li');
                 
@@ -421,14 +529,16 @@
         }
 
         function checkAchievements() {
+            let unlockedNew = false;
             for (const key in achievements) {
                 const ach = achievements[key];
                 if (!ach.unlocked && clickCount >= ach.clicks) {
                     ach.unlocked = true;
-                    // Updated call to use new signature
                     showNotification(`${ach.icon} ACHIEVEMENT UNLOCKED!`, ach.name);
+                    unlockedNew = true;
                 }
             }
+            if (unlockedNew) renderAchievements();
         }
 
         function animate() {
@@ -493,22 +603,18 @@
         }
 
         function onKeyDown(event) {
-            // Check for Enter key to show modal
             if (event.code === 'Enter') {
                 event.preventDefault();
                 showCheatModal();
                 return; 
             }
 
-            // Spacebar logic
             if (event.code === 'Space' || event.keyCode === 32) {
                 event.preventDefault();
                 
                 if (isHackrbandActive) {
-                    // Mode 1: Hack is active (Hold to click)
                     performJumpAction();
                 } else if (!isSpacebarPressed) {
-                    // Mode 2: Hack is inactive (Single click per press)
                     isSpacebarPressed = true; 
                     performJumpAction();
                 }
@@ -517,7 +623,6 @@
 
         function onKeyUp(event) {
             if (event.code === 'Space' || event.keyCode === 32) {
-                // Only reset the flag if the hack is NOT active
                 if (!isHackrbandActive) {
                     isSpacebarPressed = false; 
                 }
@@ -526,17 +631,17 @@
 
         function performJumpAction() {
             clickCount++;
-            counterElement.textContent = clickCount;
+            counterElement.textContent = clickCount.toLocaleString(); // Use toLocaleString for readability
 
             counterCard.style.transform = 'scale(1.1)';
             setTimeout(() => {
                 counterCard.style.transform = 'scale(1.0)';
             }, 100);
 
-            // UI UPDATES
+            // UI UPDATES & SAVING
             checkAchievements();
-            renderAchievements(); 
             updateRankDisplay(); 
+            saveScore(); // Save score after every click
 
             // 3D PHYSICS/VISUALS
             const newColor = getRandomColor();
@@ -551,6 +656,7 @@
 
 
         window.onload = function () {
+            initializeFirestore();
             init();
             animate();
         };
