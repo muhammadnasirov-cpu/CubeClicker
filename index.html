@@ -54,6 +54,7 @@
             color: white;
             transition: transform 0.1s ease-out;
             border: 1px solid #334155;
+            pointer-events: auto; /* Allow interaction with cards */
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -61,47 +62,120 @@
 <body>
 
     <div id="game-container">
+        
+        <!-- RANK CARD (NEW: TOP-LEFT) -->
+        <div class="absolute top-8 left-8 w-64 max-w-full pointer-events-none">
+            <div class="counter-card p-4" id="rank-display">
+                <p class="text-sm uppercase text-gray-400">Current Rank</p>
+                <!-- This element holds the rank name -->
+                <p class="text-3xl font-extrabold text-red-400 mt-1" id="current-rank-name">Recruit</p>
+            </div>
+        </div>
+
         <div id="ui-overlay">
+            <!-- Click Counter Card (STAYS CENTERED AT TOP) -->
             <div class="counter-card" id="click-counter">
                 <p class="text-sm uppercase text-gray-400">Jumps / Clicks</p>
                 <p class="text-5xl font-extrabold text-indigo-400 mt-1">0</p>
             </div>
+        </div>
+
+        <!-- ACHIEVEMENTS CARD MOVED TO TOP-RIGHT VIA ABSOLUTE POSITIONING -->
+        <div class="absolute top-8 right-8 w-64 max-w-full pointer-events-none">
+            <div class="bg-gray-800/80 p-3 rounded-xl border border-gray-700 pointer-events-auto">
+                <h3 class="text-sm font-bold text-gray-300 mb-2 border-b border-gray-700 pb-1">ACHIEVEMENTS PROGRESS</h3>
+                <ul id="achievement-list" class="space-y-3">
+                    <!-- Achievement items will be inserted here by JavaScript -->
+                </ul>
             </div>
+        </div>
+    </div>
+
+    <!-- Notification Area (for unlocked achievements) -->
+    <div id="notification-area" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
+        <!-- Notifications appear here -->
     </div>
 
     <script type="module">
         let scene, camera, renderer, cube, gridHelper, cubeLight;
         let clickCount = 0;
         let cubeVelocity = 0;
+        let isSpacebarPressed = false; 
         const gravity = -0.005;
         const jumpForce = 0.1;
         const cubeBaseY = 0.5;
-        const gravityIncreaseFactor = 0.3; // Controls how much gravity increases per unit of height
+        const gravityIncreaseFactor = 0.3; 
 
         // Base camera constants for zoom effect
         const baseCameraZ = 4;
         const baseCameraY = 3;
-        const zoomFactor = 2.0; // Controls how much the camera pulls back per unit of height
+        const zoomFactor = 2.0; 
 
         // Variables for the forward/backward click effect
         let cubeZOffset = 0;
         let cameraZOffset = 0;
-        const clickZImpulse = 0.3; // How much the cube/camera move forward on click
-        const springBackSpeed = 0.1; // How quickly they return to normal Z
+        const clickZImpulse = 0.3; 
+        const springBackSpeed = 0.1; 
 
+        // UI elements
         const counterElement = document.getElementById('click-counter').querySelector('p.text-5xl');
         const counterCard = document.getElementById('click-counter');
         const gameContainer = document.getElementById('game-container');
+        const achievementListElement = document.getElementById('achievement-list');
+        const notificationArea = document.getElementById('notification-area');
+        const rankNameElement = document.getElementById('current-rank-name'); // NEW: Rank UI element
+        
+        // --- RANK DEFINITIONS ---
+        const ranks = [
+            { clicks: 1, name: 'Recruit' },
+            { clicks: 100, name: 'Rookie' },
+            { clicks: 200, name: 'Private 2' },
+            { clicks: 400, name: 'Private 1' },
+            { clicks: 800, name: 'Specialist' },
+            { clicks: 1000, name: 'Corporal' },
+            { clicks: 1200, name: 'Captain' },
+            { clicks: 1400, name: 'Major' },
+            { clicks: 1600, name: 'General' },
+            { clicks: 1800, name: 'Advanced' },
+            { clicks: 2000, name: 'Assassin' },
+            { clicks: 3000, name: 'Elite 1' },
+            { clicks: 4000, name: 'Master' },
+            { clicks: 5000, name: 'Legend' },
+            { clicks: 6000, name: 'Vetaren' },
+            { clicks: 7000, name: 'War Lord' },
+            { clicks: 8000, name: 'President' },
+            { clicks: 9000, name: 'King' },
+            { clicks: 10000, name: 'Death Lord' }
+        ];
+
+        // Achievement Definitions
+        const achievements = {
+            'first_step': { name: 'First Step', clicks: 1, unlocked: false, icon: '⭐' },
+            'warmed_up': { name: 'Warmed Up', clicks: 100, unlocked: false, icon: '🔥' },
+            'no_pain_no_gain': { name: 'No Pain, No Gain', clicks: 500, unlocked: false, icon: '💪' },
+            'grinding_hard': { name: 'Grinding Hard', clicks: 1000, unlocked: false, icon: '🛠️' },
+            'calm_down': { name: 'Calm Down!', clicks: 1500, unlocked: false, icon: '🧘' },
+            'dented_space_bar': { name: 'Dented Space Bar', clicks: 2000, unlocked: false, icon: '⌨️' },
+            'still_going': { name: 'Still Going', clicks: 2800, unlocked: false, icon: '🏃' },
+            'addicted': { name: 'Addicted', clicks: 3000, unlocked: false, icon: '💉' },
+            'think_money': { name: 'Think of it as money!', clicks: 5000, unlocked: false, icon: '💰' },
+            'not_stopping': { name: 'Not stopping', clicks: 5500, unlocked: false, icon: '🛑' },
+            'why_still_here': { name: 'Why are you still here??', clicks: 6000, unlocked: false, icon: '❓' },
+            'touch_grass': { name: 'Bro touch grass', clicks: 8000, unlocked: false, icon: '🌿' },
+            'getting_paid': { name: 'Are you getting paid for this?', clicks: 9400, unlocked: false, icon: '💸' },
+            'ten_thousand': { name: 'TEN THOUSEND!', clicks: 10000, unlocked: false, icon: '💯' },
+            'beat_me': { name: 'Im out of ideas, you beat me', clicks: 15000, unlocked: false, icon: '👑' }
+        };
 
         function getRandomColor() {
             // Using a palette for neon-like colors
-            const colors = [0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF69B4, 0x8A2BE2]; // Cyan, Magenta, Yellow, Green, HotPink, BlueViolet
+            const colors = [0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF69B4, 0x8A2BE2]; 
             return colors[Math.floor(Math.random() * colors.length)];
         }
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0a0a1a); // Very dark blue/purple for neon contrast
+            scene.background = new THREE.Color(0x0a0a1a); 
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
             camera.position.set(0, baseCameraY, baseCameraZ);
@@ -111,16 +185,16 @@
             renderer.setPixelRatio(window.devicePixelRatio);
             gameContainer.appendChild(renderer.domElement);
 
-            const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Softer ambient light
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.5); 
             scene.add(ambientLight);
 
             // Cube setup
             const geometry = new THREE.BoxGeometry(1, 1, 1);
-            const initialColor = getRandomColor(); // Start with a random neon color
-            // Use MeshBasicMaterial for pure color that doesn't react to lights, or MeshStandard/Lambert with emissive
+            const initialColor = getRandomColor(); 
+            
             const material = new THREE.MeshLambertMaterial({ 
                 color: initialColor, 
-                emissive: initialColor, // Cube glows its own color
+                emissive: initialColor, 
                 emissiveIntensity: 0.8
             });
             cube = new THREE.Mesh(geometry, material);
@@ -128,43 +202,162 @@
             scene.add(cube);
 
             // Add a subtle point light to the cube to enhance its glow
-            cubeLight = new THREE.PointLight(initialColor, 1.5, 5); // Color, intensity, distance
+            cubeLight = new THREE.PointLight(initialColor, 1.5, 5); 
             cubeLight.position.set(0, cubeBaseY + 0.5, 0);
-            cube.add(cubeLight); // Make the light a child of the cube so it moves with it
+            cube.add(cubeLight); 
 
             // Ground Grid - Kept for the floor
             const size = 20;
             const divisions = 20;
-            gridHelper = new THREE.GridHelper(size, divisions, 0x00aaff, 0x00aaff); // Neon blue grid lines
+            gridHelper = new THREE.GridHelper(size, divisions, 0x00aaff, 0x00aaff); 
             gridHelper.material.opacity = 0.6;
             gridHelper.material.transparent = true;
-            gridHelper.position.y = 0.01; // Slightly above 0 to prevent z-fighting with the background
+            gridHelper.position.y = 0.01; 
             scene.add(gridHelper);
+
+            // Initial UI Renders
+            renderAchievements();
+            updateRankDisplay(); // NEW: Initial rank display
 
             // Event listeners
             window.addEventListener('resize', onWindowResize, false);
             document.addEventListener('keydown', onKeyDown, false);
-            gameContainer.addEventListener('click', performJumpAction, false); // New click listener
+            document.addEventListener('keyup', onKeyUp, false); 
+            gameContainer.addEventListener('click', performJumpAction, false); 
+        }
+
+        // --- RANK LOGIC ---
+        function getCurrentRank() {
+            let currentRank = ranks[0]; // Recruit (1 click)
+
+            // Iterate through ranks to find the highest one achieved
+            for (let i = 0; i < ranks.length; i++) {
+                if (clickCount >= ranks[i].clicks) {
+                    currentRank = ranks[i];
+                } else {
+                    // Since the list is sorted, we can stop
+                    break; 
+                }
+            }
+            return currentRank;
+        }
+
+        function updateRankDisplay() {
+            const rank = getCurrentRank();
+            rankNameElement.textContent = rank.name;
+        }
+
+        // --- ACHIEVEMENT LOGIC ---
+        function renderAchievements() {
+            achievementListElement.innerHTML = ''; 
+
+            const allAchievements = Object.values(achievements).sort((a, b) => a.clicks - b.clicks);
+
+            let lastAchieved = { name: 'None', clicks: 0, icon: '➖', status: 'Achieved' };
+            let upcoming = null;
+            let upcomingAfter = null;
+            
+            for (const ach of allAchievements) {
+                if (ach.unlocked) {
+                    lastAchieved = { ...ach, status: 'Achieved' };
+                } else if (!upcoming) {
+                    upcoming = { ...ach, status: 'Upcoming' };
+                } else if (!upcomingAfter) {
+                    upcomingAfter = { ...ach, status: 'Next Goal' };
+                    break; 
+                }
+            }
+
+            const defaultNext = { name: 'Maxed Out', clicks: 'N/A', icon: '👑', status: 'Maxed' };
+
+            const displaySlots = [
+                {
+                    title: "Already Achieved",
+                    item: lastAchieved,
+                    color: 'text-green-400',
+                },
+                {
+                    title: "Upcoming",
+                    item: upcoming || defaultNext,
+                    color: 'text-indigo-400',
+                },
+                {
+                    title: "Upcoming after",
+                    item: upcomingAfter || defaultNext,
+                    color: 'text-yellow-400',
+                }
+            ];
+
+            // Render the three slots
+            displaySlots.forEach(slot => {
+                const li = document.createElement('li');
+                
+                let progressDisplay;
+                if (slot.item.status === 'Achieved') {
+                    progressDisplay = slot.item.clicks.toLocaleString() + ' Clicks';
+                } else if (slot.item.clicks === 'N/A') {
+                    progressDisplay = 'N/A';
+                } else if (slot.title === 'Upcoming' && typeof slot.item.clicks === 'number') {
+                    const needed = slot.item.clicks - clickCount;
+                    progressDisplay = `${needed.toLocaleString()} needed`;
+                } else {
+                    progressDisplay = slot.item.clicks.toLocaleString() + ' total';
+                }
+
+                li.className = `flex flex-col text-xs p-2 rounded-lg border border-gray-600/50 bg-gray-700/50`;
+                li.innerHTML = `
+                    <div class="flex justify-between items-center mb-1 border-b border-gray-600/30 pb-1">
+                        <span class="font-bold text-gray-300 uppercase text-[10px]">${slot.title}</span>
+                        <span class="text-xs ${slot.color}">${slot.item.status}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium ${slot.color}">${slot.item.icon} ${slot.item.name}</span>
+                        <span class="text-sm font-bold text-white">${progressDisplay}</span>
+                    </div>
+                `;
+                achievementListElement.appendChild(li);
+            });
+        }
+
+        function showNotification(name, icon) {
+            const notification = document.createElement('div');
+            notification.className = 'bg-yellow-400 text-gray-900 p-3 rounded-xl shadow-2xl transition-all duration-300 transform translate-x-full opacity-0 pointer-events-auto min-w-[200px]';
+            notification.innerHTML = `<span class="font-extrabold">${icon} ACHIEVEMENT UNLOCKED!</span><br>${name}`;
+            notificationArea.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.transform = 'translateX(0)';
+                notification.style.opacity = '1';
+            }, 10);
+
+            setTimeout(() => {
+                notification.style.transform = 'translateX(100%)';
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 500);
+            }, 4000); 
+        }
+
+        function checkAchievements() {
+            for (const key in achievements) {
+                const ach = achievements[key];
+                if (!ach.unlocked && clickCount >= ach.clicks) {
+                    ach.unlocked = true;
+                    showNotification(ach.name, ach.icon);
+                }
+            }
         }
 
         function animate() {
             requestAnimationFrame(animate);
 
-            // Apply forward/backward Z-offset for cube
             cube.position.z = cubeZOffset;
-            
-            // Ensure cubeLight follows cube's Z position
             cubeLight.position.z = cube.position.z; 
 
-            // Update cube's vertical movement
             if (cube.position.y > cubeBaseY || cubeVelocity > 0) {
                 cube.position.y += cubeVelocity;
-                
-                // Ensure cubeLight follows cube's Y position
                 cubeLight.position.y = cube.position.y + 0.5;
 
                 const heightOffset = cube.position.y - cubeBaseY; 
-                
                 const gravityFactor = 1 + heightOffset * gravityIncreaseFactor;
                 const dynamicGravity = gravity * gravityFactor;
 
@@ -173,10 +366,9 @@
                 if (cube.position.y < cubeBaseY) {
                     cube.position.y = cubeBaseY;
                     cubeVelocity = 0;
-                    cubeLight.position.y = cubeBaseY + 0.5; // Snap light to base
+                    cubeLight.position.y = cubeBaseY + 0.5; 
                 }
                 
-                // --- Dynamic Camera Zoom Logic ---
                 const zoomOffset = heightOffset * zoomFactor; 
                 const followY = heightOffset * 0.5; 
 
@@ -184,7 +376,6 @@
                 camera.position.y = baseCameraY + followY;
 
             } else {
-                // Cube is grounded, ensure camera is at base position
                 camera.position.z = baseCameraZ + cameraZOffset;
                 camera.position.y = baseCameraY;
             }
@@ -200,13 +391,11 @@
 
             renderer.render(scene, camera);
 
-            // Gradually spring back cube's Z offset
             if (cubeZOffset !== 0) {
                 cubeZOffset -= cubeZOffset * springBackSpeed;
                 if (Math.abs(cubeZOffset) < 0.01) cubeZOffset = 0;
             }
 
-            // Gradually spring back camera's Z offset
             if (cameraZOffset !== 0) {
                 cameraZOffset -= cameraZOffset * springBackSpeed;
                 if (Math.abs(cameraZOffset) < 0.01) cameraZOffset = 0;
@@ -220,9 +409,16 @@
         }
 
         function onKeyDown(event) {
-            if (event.code === 'Space' || event.keyCode === 32) {
+            if ((event.code === 'Space' || event.keyCode === 32) && !isSpacebarPressed) {
                 event.preventDefault();
+                isSpacebarPressed = true; 
                 performJumpAction();
+            }
+        }
+
+        function onKeyUp(event) {
+            if (event.code === 'Space' || event.keyCode === 32) {
+                isSpacebarPressed = false; 
             }
         }
 
@@ -235,13 +431,18 @@
                 counterCard.style.transform = 'scale(1.0)';
             }, 100);
 
+            // UI UPDATES
+            checkAchievements();
+            renderAchievements(); 
+            updateRankDisplay(); // NEW: Update the rank on every click
+
+            // 3D PHYSICS/VISUALS
             const newColor = getRandomColor();
             cube.material.color.set(newColor);
-            cube.material.emissive.set(newColor); // Update emissive color too
-            cubeLight.color.set(newColor); // Update the point light color
+            cube.material.emissive.set(newColor); 
+            cubeLight.color.set(newColor); 
 
             cubeVelocity = jumpForce;
-
             cubeZOffset = -clickZImpulse;
             cameraZOffset = clickZImpulse;
         }
